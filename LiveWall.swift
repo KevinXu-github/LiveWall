@@ -9,7 +9,8 @@
 //   • Low Power Mode, or thermal state serious/critical
 //   • (optional) running on battery
 // Menu bar icon: Pause/Resume, Choose Video (all displays or one), Scaling,
-// Pause on Battery, Start at Login, Quit.
+// Pause on Battery, Start at Login, Quit. In Finder, Open With → LiveWall
+// (or dropping a video on its icon) sets the video too.
 
 import AppKit
 import AVFoundation
@@ -87,12 +88,73 @@ final class LiveWall: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Launch
 
+    private var openingVideo = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if moveToApplicationsIfNeeded() { return }
         buildMenu()
         installObservers()
         registerLoginItemOnFirstRun()
         buildWindows()
-        if walls.isEmpty { chooseVideo() }    // first launch of a download: no video yet
+        if walls.isEmpty && !openingVideo { chooseVideo() }    // first launch: no video yet
+    }
+
+    /// Finder's Open With → LiveWall, or a video dropped on the app's icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first else { return }
+        openingVideo = true
+        useVideo(url) { [self] bookmark in
+            videoBookmark = bookmark
+            displayBookmarks = [:]
+        }
+    }
+
+    // MARK: Install location
+
+    /// Opened from Downloads, login items break, so offer to move into Applications.
+    /// Returns true when a copy there has been launched and this one is quitting.
+    private func moveToApplicationsIfNeeded() -> Bool {
+        let fm = FileManager.default
+        let here = Bundle.main.bundleURL
+        let userApps = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+        guard here.pathExtension == "app",
+              !["/Applications", userApps.path].contains(here.deletingLastPathComponent().path)
+        else { return false }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Move LiveWall to your Applications folder?"
+        a.informativeText = "It needs to be there to start when you log in."
+        a.addButton(withTitle: "Move")
+        a.addButton(withTitle: "Not Now")
+        guard a.runModal() == .alertFirstButtonReturn else { return false }
+
+        let dir = fm.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications") : userApps
+        let dest = dir.appendingPathComponent("LiveWall.app")
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: dest.path) { try fm.trashItem(at: dest, resultingItemURL: nil) }
+            try fm.copyItem(at: here, to: dest)
+        } catch {
+            alert("Couldn’t move LiveWall", error.localizedDescription)
+            return false
+        }
+        // You already allowed this copy to open; don't make macOS ask again.
+        let xattr = Process()
+        xattr.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        xattr.arguments = ["-dr", "com.apple.quarantine", dest.path]
+        try? xattr.run()
+        xattr.waitUntilExit()
+
+        for other in NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        where other != .current { other.terminate() }    // an older copy already running
+
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: dest, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+        return true
     }
 
     // MARK: Videos
@@ -123,14 +185,19 @@ final class LiveWall: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return u
     }
 
-    /// Asks for a video, checks AVFoundation can play it, then hands its bookmark to `save` and rebuilds.
+    /// Asks for a video, then uses it as `useVideo` does.
     private func pickVideo(_ message: String, save: @escaping (Data) -> Void) {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
         panel.message = message
         panel.allowedContentTypes = [.movie]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
+        useVideo(url, save: save)
+    }
+
+    /// Checks AVFoundation can play `url`, then hands its bookmark to `save` and rebuilds.
+    private func useVideo(_ url: URL, save: @escaping (Data) -> Void) {
+        Task { @MainActor in    // windows may only be touched on the main thread
             let playable = (try? await AVURLAsset(url: url).load(.isPlayable)) ?? false
             guard playable, let bookmark = try? url.bookmarkData() else {
                 alert("LiveWall can’t play “\(url.lastPathComponent)”",
@@ -279,7 +346,7 @@ final class LiveWall: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 loop.player.pause()
             }
         }
-        statusItem.button?.image = NSImage(systemSymbolName: userPaused ? "pause.rectangle" : "play.rectangle",
+        statusItem?.button?.image = NSImage(systemSymbolName: userPaused ? "pause.rectangle" : "play.rectangle",
                                            accessibilityDescription: "LiveWall")
     }
 
