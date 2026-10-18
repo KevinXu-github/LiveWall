@@ -2,7 +2,7 @@
 
 Use any video as your Mac's desktop wallpaper. Free and open source: one small Swift file, no dependencies.
 
-macOS has no built-in way to use your own video as a live wallpaper, and the free apps I tried kept freezing. LiveWall does one thing: it loops a video behind your desktop icons, and stops completely whenever nobody can see it.
+macOS has no built-in way to use your own video as a live wallpaper. LiveWall does one thing: it loops a video behind your desktop icons, and stops completely whenever nobody can see it.
 
 ## Features
 
@@ -52,7 +52,7 @@ This compiles `LiveWall.swift`, ad-hoc signs the app, installs it to `/Applicati
 
 ## Battery and performance
 
-About 2% CPU on an M4 MacBook Air while the desktop is visible, and about 0% when it's covered. Videos play on the Mac's hardware video decoder. Displays that show the same video share one player, so a second display costs almost nothing extra.
+Light enough to leave running all day. Videos play on the Mac's hardware video decoder, and playback stops entirely when the desktop is covered. Displays that show the same video share one player, so a second display costs almost nothing extra.
 
 A video's size matters more than anything else: 1080p at 30 fps uses less power than 4K at 60 fps. HEVC (H.265) and H.264 are both decoded in hardware.
 
